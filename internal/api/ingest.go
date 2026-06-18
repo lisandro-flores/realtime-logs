@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/example/realtime-logs/internal/db"
 	"github.com/example/realtime-logs/internal/models"
@@ -49,10 +52,18 @@ func (h *IngestHandler) handleIngest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload: expected {items:[...]} or single object"})
 		return
 	}
+	if err := validateEntries(req.Items); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	// Enqueue for async processing
 	if h.queue != nil {
-		h.queue <- req.Items
-		c.JSON(http.StatusAccepted, gin.H{"enqueued": len(req.Items)})
+		select {
+		case h.queue <- req.Items:
+			c.JSON(http.StatusAccepted, gin.H{"enqueued": len(req.Items)})
+		default:
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingest queue is full"})
+		}
 		return
 	}
 	// Fallback to sync path
@@ -66,13 +77,45 @@ func (h *IngestHandler) handleIngest(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"ingested": len(req.Items)})
 }
 
+func validateEntries(entries []models.LogEntry) error {
+	for i, entry := range entries {
+		if strings.TrimSpace(entry.OrgID) == "" {
+			return &entryValidationError{index: i, field: "org_id"}
+		}
+		if strings.TrimSpace(entry.Level) == "" {
+			return &entryValidationError{index: i, field: "level"}
+		}
+		if strings.TrimSpace(entry.Message) == "" {
+			return &entryValidationError{index: i, field: "message"}
+		}
+	}
+	return nil
+}
+
+type entryValidationError struct {
+	index int
+	field string
+}
+
+func (e *entryValidationError) Error() string {
+	return "invalid payload: items[" + strconv.Itoa(e.index) + "]." + e.field + " is required"
+}
+
 // StartWorkers initializes background goroutines to store and broadcast logs.
 func (h *IngestHandler) StartWorkers(n int) {
+	h.StartWorkersWithQueue(n, 1024)
+}
+
+// StartWorkersWithQueue initializes workers using a custom queue capacity.
+func (h *IngestHandler) StartWorkersWithQueue(n, queueSize int) {
 	if n <= 0 {
 		n = 2
 	}
+	if queueSize <= 0 {
+		queueSize = 1024
+	}
 	if h.queue == nil {
-		h.queue = make(chan []models.LogEntry, 1024)
+		h.queue = make(chan []models.LogEntry, queueSize)
 	}
 	for i := 0; i < n; i++ {
 		go func() {
@@ -80,7 +123,10 @@ func (h *IngestHandler) StartWorkers(n int) {
 				if len(batch) == 0 {
 					continue
 				}
-				_ = h.Store.Append(batch)
+				if err := h.Store.Append(batch); err != nil {
+					log.Printf("ingest append failed: %v", err)
+					continue
+				}
 				if h.Broadcast != nil {
 					h.Broadcast(batch)
 				}

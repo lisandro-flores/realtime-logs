@@ -36,7 +36,7 @@
 
 - **Concurrencia bien implementada:**
   - Pipeline asíncrono con canales y workers en `IngestHandler`
-  - Broadcast no bloqueante en WebSocket hub
+  - Broadcast WebSocket serializado para evitar escrituras concurrentes por conexión
   - Uso correcto de `sync.RWMutex` en MemoryStore
 
 - **Flexibilidad:**
@@ -47,7 +47,7 @@
 ### ⚠️ Áreas de mejora
 - **Falta un health check completo:** actualmente `/health` solo devuelve OK sin verificar conectividad de DB o estado de workers
 - **Sin circuit breaker:** si Postgres se cae, los requests fallan sin retry o fallback graceful
-- **Tamaño de cola fijo:** el canal de ingesta tiene capacidad 1024; bajo picos extremos podría bloquearse
+- **Tamaño de cola fijo:** el canal de ingesta tiene capacidad 1024; bajo picos extremos responde con backpressure HTTP 503
 
 **Recomendación:** Agregar health checks profundos, circuit breaker (gobreaker), y capacidad dinámica o backpressure en la cola.
 
@@ -76,8 +76,8 @@
   - No valida longitud de `message`, `org_id`, `level`
   - Sin sanitización contra XSS/SQL injection (aunque GORM mitiga SQL injection)
   
-- **Manejo de errores incompleto:**
-  - `IngestHandler.StartWorkers` ignora errores de `Store.Append` (`_ = h.Store.Append(batch)`)
+- **Manejo de errores parcialmente cubierto:**
+  - `IngestHandler.StartWorkers` registra errores de `Store.Append`, pero no puede comunicarlos al cliente porque el procesamiento es asincrono
   - Sin logs estructurados (usa `log.Printf` básico)
 
 - **Sin paginación efectiva en WebSocket:** todos los clientes reciben todos los logs sin filtros
@@ -90,7 +90,7 @@
 
 ### ✅ Fortalezas
 - **README completo:** arquitectura, estructura, instalación, API, ejemplos PowerShell
-- **DOCS.md detallado:** configuración, modelo de datos, troubleshooting, Docker Compose
+- **`docs/technical.md` detallado:** configuración, modelo de datos, troubleshooting, Docker Compose
 - **`.env.example` claro:** variables comentadas con ejemplos
 - **Comentarios en código:** interfaces y funciones clave documentadas
 
@@ -167,7 +167,7 @@
 
 ### ✅ Fortalezas
 - **Workers concurrentes:** procesamiento paralelo de ingesta
-- **Broadcast no bloqueante:** WebSocket con goroutine por cliente
+- **Broadcast serializado:** WebSocket evita escrituras concurrentes sobre la misma conexión
 - **Postgres soportado:** base relacional escalable verticalmente
 - **Paginación en query:** evita cargar todos los logs en memoria
 
@@ -208,7 +208,7 @@
 ## 🏆 Puntos destacados del proyecto
 
 1. **Arquitectura modular y limpia:** el código es fácil de leer y extender
-2. **Documentación excepcional:** README y DOCS.md están por encima del estándar
+2. **Documentación excepcional:** README y `docs/technical.md` están por encima del estándar
 3. **Concurrencia bien manejada:** pipeline asíncrono y broadcast eficiente
 4. **Deploy listo para producción:** Docker Compose funcional out-of-the-box
 5. **Flexibilidad:** memoria vs Postgres, rutas duplicadas, configuración por env

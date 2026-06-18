@@ -1,4 +1,4 @@
-# Realtime Logs – Documentación detallada
+# Realtime Logs - Documentacion detallada
 
 Esta guía cubre instalación, configuración, API, modelo de datos, arquitectura y resolución de problemas.
 
@@ -18,21 +18,26 @@ Esta guía cubre instalación, configuración, API, modelo de datos, arquitectur
 - PORT: puerto HTTP (default 8080)
 - API_KEYS: lista de claves separadas por coma; activa el middleware X-API-Key (vacío = desactivado)
 - POSTGRES_DSN: DSN de PostgreSQL; si está presente se usa Postgres, si no memoria
+- ACCESS_LOGS: activa/desactiva access logs HTTP (default true)
+- INGEST_WORKERS: cantidad de workers de ingesta asincrona (default 2)
+- INGEST_QUEUE_SIZE: capacidad de la cola interna de ingesta (default 1024)
 
 Puedes copiar `.env.example` a `.env` y editar.
+
+### Ejecutar (Bash)
+```
+PORT=9090 go run ./cmd/server
+```
 
 ### Ejecutar (PowerShell)
 ```
 $env:PORT = "9090"
-# $env:API_KEYS = "dev-key"
-# $env:POSTGRES_DSN = "host=localhost user=postgres password=postgres dbname=realtime_logs port=5432 sslmode=disable TimeZone=UTC"
-
 go run ./cmd/server
 ```
 
 Prueba salud:
 ```
-iwr http://localhost:9090/health
+curl http://localhost:9090/health
 ```
 
 ## 3. API
@@ -43,10 +48,15 @@ iwr http://localhost:9090/health
   - Array: { "items": [ {"org_id":"acme","level":"info","message":"hi","timestamp":"2025-10-15T22:00:00Z"}, ... ] }
   - Objeto: { "org_id":"acme","level":"info","message":"one" }
 - Respuesta: 202 { "enqueued": N }
+- Si el batch no tiene `org_id`, `level` o `message`, responde 400.
+- Si la cola interna esta llena, responde 503 en lugar de bloquear el request.
 
 ### Consulta
 - GET /query y GET /api/query
 - Params: org_id, level, q, from, to (RFC3339), limit, offset
+- `limit` se normaliza entre 1 y 1000; default 100.
+- `offset` negativo se normaliza a 0.
+- `from` y `to` invalidos responden 400.
 - Respuesta: { total, items }
 
 ### WebSocket
@@ -65,6 +75,7 @@ type LogEntry struct {
 }
 ```
 - Timestamp se normaliza a RFC3339 si falta
+- Timestamp invalido se reemplaza por la hora actual
 - Ts se calcula al ingerir para ordenar/filtrar
 
 ## 5. Arquitectura
@@ -73,10 +84,10 @@ type LogEntry struct {
 - `internal/api/query.go`: filtros/paginación contra Store
 - `internal/auth/api_keys.go`: middleware X-API-Key
 - `internal/db/database.go`: MemoryStore y PostgresStore
-- `internal/stream/websocket.go`: Hub WS (upgrade, registro, broadcast)
+- `internal/stream/websocket.go`: Hub WS (upgrade, registro, broadcast serializado por conexion)
 
 ## 6. Persistencia
-- Memoria: slice con RWMutex y capacidad fija (recorte FIFO)
+- Memoria: slice con RWMutex, capacidad fija (recorte FIFO) y consultas ordenadas por `Ts DESC`
 - PostgreSQL: GORM, AutoMigrate, consultas con filtros y orden por Ts DESC
 
 ## 7. Seguridad
@@ -99,7 +110,7 @@ docker run --rm -e POSTGRES_DSN="host=host.docker.internal user=postgres passwor
 - Postgres → revisa DSN y conectividad; el esquema migra automáticamente
 
 ## 10. Próximos pasos
-- docker-compose con Postgres
+- Health check profundo contra Postgres
 - Índices y filtros avanzados
 - UI de dashboard
 - Cuotas, multitenancy, alertas

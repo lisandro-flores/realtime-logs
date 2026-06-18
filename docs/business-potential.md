@@ -23,7 +23,7 @@
 ### 1.1 El problema de la observabilidad moderna
 
 En 2025, las aplicaciones modernas generan **millones de eventos por segundo**:
-- Microservicios distribuidos (Kubernetaes, serverless)
+- Microservicios distribuidos (Kubernetes, serverless)
 - APIs de terceros (pagos, notificaciones, analytics)
 - Sistemas IoT (sensores, dispositivos conectados)
 - Aplicaciones móviles y web (errores, comportamiento de usuario)

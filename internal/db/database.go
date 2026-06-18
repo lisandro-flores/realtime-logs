@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -53,21 +54,10 @@ func NewMemoryStore(capacity int) *MemoryStore {
 func (m *MemoryStore) Append(entries []models.LogEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now().UTC()
+	normalizeEntries(entries)
 	for i := range entries {
-		// assign ID
 		entries[i].ID = m.nextID
 		m.nextID++
-		// normalize timestamp
-		if strings.TrimSpace(entries[i].Timestamp) == "" {
-			entries[i].Timestamp = now.Format(time.RFC3339Nano)
-		}
-		// parsed timestamp for sorting/filtering
-		if t, err := time.Parse(time.RFC3339Nano, entries[i].Timestamp); err == nil {
-			entries[i].Ts = t.UTC()
-		} else {
-			entries[i].Ts = now
-		}
 		m.logs = append(m.logs, entries[i])
 	}
 	// trim to capacity (drop oldest)
@@ -104,6 +94,9 @@ func (m *MemoryStore) Query(p QueryParams) ([]models.LogEntry, int) {
 		}
 		filtered = append(filtered, lg)
 	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return filtered[i].Ts.After(filtered[j].Ts)
+	})
 	total := len(filtered)
 	// pagination
 	start := p.Offset
@@ -140,6 +133,11 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 }
 
 func (p *PostgresStore) Append(entries []models.LogEntry) error {
+	normalizeEntries(entries)
+	return p.db.WithContext(context.Background()).Create(&entries).Error
+}
+
+func normalizeEntries(entries []models.LogEntry) {
 	now := time.Now().UTC()
 	for i := range entries {
 		if strings.TrimSpace(entries[i].Timestamp) == "" {
@@ -149,9 +147,9 @@ func (p *PostgresStore) Append(entries []models.LogEntry) error {
 			entries[i].Ts = t.UTC()
 		} else {
 			entries[i].Ts = now
+			entries[i].Timestamp = now.Format(time.RFC3339Nano)
 		}
 	}
-	return p.db.WithContext(context.Background()).Create(&entries).Error
 }
 
 func (p *PostgresStore) Query(qp QueryParams) ([]models.LogEntry, int) {

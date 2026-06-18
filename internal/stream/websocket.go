@@ -54,17 +54,17 @@ func (h *Hub) HandleWS(c *gin.Context) {
 
 // Broadcast sends the given entries to all connected clients.
 func (h *Hub) Broadcast(entries []models.LogEntry) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var stale []*websocket.Conn
 	for conn := range h.clients {
 		if err := conn.WriteJSON(entries); err != nil {
-			// On error, schedule close
-			go func(c *websocket.Conn) {
-				h.mu.Lock()
-				delete(h.clients, c)
-				h.mu.Unlock()
-				c.Close()
-			}(conn)
+			stale = append(stale, conn)
 		}
+	}
+	for _, conn := range stale {
+		delete(h.clients, conn)
+		_ = conn.Close()
 	}
 }

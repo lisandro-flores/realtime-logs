@@ -27,17 +27,27 @@ func (h *QueryHandler) handleQuery(c *gin.Context) {
 		limit  = parseIntDefault(c.Query("limit"), 100)
 		offset = parseIntDefault(c.Query("offset"), 0)
 	)
+	limit = clamp(limit, 1, 1000)
+	if offset < 0 {
+		offset = 0
+	}
 
 	var fromPtr, toPtr *time.Time
 	if fromS != "" {
-		if t, err := time.Parse(time.RFC3339Nano, fromS); err == nil {
-			fromPtr = &t
+		t, err := time.Parse(time.RFC3339Nano, fromS)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from: expected RFC3339 timestamp"})
+			return
 		}
+		fromPtr = &t
 	}
 	if toS != "" {
-		if t, err := time.Parse(time.RFC3339Nano, toS); err == nil {
-			toPtr = &t
+		t, err := time.Parse(time.RFC3339Nano, toS)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to: expected RFC3339 timestamp"})
+			return
 		}
+		toPtr = &t
 	}
 
 	items, total := h.Store.Query(db.QueryParams{
@@ -63,4 +73,14 @@ func parseIntDefault(s string, def int) int {
 		return v
 	}
 	return def
+}
+
+func clamp(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
